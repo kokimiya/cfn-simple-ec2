@@ -1,0 +1,288 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Full VPC + EC2 + ENI setup with parameterized access control
+
+Parameters:
+  UniqueString:
+    Type: String
+    Description: Prefix for resource names (e.g., projectA, dev-env, etc.)
+
+  AvailabilityZone:
+    Type: String
+    Description: Availability Zone for all subnets (e.g., ap-northeast-1a)
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 Instance Type
+
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: AMI ID for EC2 instances
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Name of an existing EC2 KeyPair to enable SSH access
+
+  ENI1PrimaryIP:
+    Type: String
+    Description: Primary IP for ENI1 (must be within 10.0.0.0/24 - PublicSubnet1)
+
+  ENI1SecondaryIP:
+    Type: String
+    Description: Secondary IP for ENI1 (must be within 10.0.0.0/24 - PublicSubnet1)
+
+  ENI2PrimaryIP:
+    Type: String
+    Description: Primary IP for ENI2 (must be within 10.0.1.0/24 - PublicSubnet2)
+
+  ENI2SecondaryIP:
+    Type: String
+    Description: Secondary IP for ENI2 (must be within 10.0.1.0/24 - PublicSubnet2)
+
+  AllowedSSHIngressCIDRs:
+    Type: List<String>
+    Description: List of CIDR blocks allowed to access EC2 via SSH
+
+  AllowedHTTPIngressCIDRs:
+    Type: List<String>
+    Description: List of CIDR blocks allowed to access EC2 and ENI via HTTP/HTTPS
+
+  EC2Instance1Name:
+    Type: String
+    Description: Name tag for EC2 instance in Public Subnet 3
+
+  EC2Instance2Name:
+    Type: String
+    Description: Name tag for EC2 instance in Public Subnet 4
+
+Resources:
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-public-route-table"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-public-subnet1"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-public-subnet2"
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-public-subnet3"
+
+  PublicSubnet4:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Ref AvailabilityZone
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-public-subnet4"
+
+  # Subnet Route Table Association
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociation3:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet3
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociation4:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet4
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Groups
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EC2 instances
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-ec2-sg"
+
+  AllowSSHFromCIDRs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Select [0, !Ref AllowedSSHIngressCIDRs]
+
+  AllowHTTPFromCIDRs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: !Select [0, !Ref AllowedHTTPIngressCIDRs]
+
+  AllowHTTPSFromCIDRs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: !Select [0, !Ref AllowedHTTPIngressCIDRs]
+
+  AllowEC2ToEC2AllTraffic:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EC2SecurityGroup
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref EC2SecurityGroup
+
+  ENISecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ENIs
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Select [0, !Ref AllowedHTTPIngressCIDRs]
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Select [0, !Ref AllowedHTTPIngressCIDRs]
+      Tags:
+        - Key: Name
+          Value: !Sub "${UniqueString}-eni-sg"
+
+  # ENIs
+  NetworkInterface1:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      PrivateIpAddress: !Ref ENI1PrimaryIP
+      SecondaryPrivateIpAddresses:
+        - !Ref ENI1SecondaryIP
+      GroupSet:
+        - !Ref ENISecurityGroup
+      Tags:
+        - Key: Name
+          Value: eni-public-subnet1
+
+  NetworkInterface2:
+    Type: AWS::EC2::NetworkInterface
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      PrivateIpAddress: !Ref ENI2PrimaryIP
+      SecondaryPrivateIpAddresses:
+        - !Ref ENI2SecondaryIP
+      GroupSet:
+        - !Ref ENISecurityGroup
+      Tags:
+        - Key: Name
+          Value: eni-public-subnet2
+
+  # EC2 Instances
+  EC2Instance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref PublicSubnet3
+          DeleteOnTermination: true
+          GroupSet:
+            - !Ref EC2SecurityGroup
+        - DeviceIndex: 1
+          NetworkInterfaceId: !Ref NetworkInterface1
+      Tags:
+        - Key: Name
+          Value: !Ref EC2Instance1Name
+
+  EC2Instance2:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - DeviceIndex: 0
+          SubnetId: !Ref PublicSubnet4
+          DeleteOnTermination: true
+          GroupSet:
+            - !Ref EC2SecurityGroup
+        - DeviceIndex: 1
+          NetworkInterfaceId: !Ref NetworkInterface2
+      Tags:
+        - Key: Name
+          Value: !Ref EC2Instance2Name
